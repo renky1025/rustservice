@@ -1,6 +1,7 @@
 mod sqlite_utilmod;
 
 use axum::{
+    extract::Extension,
     extract::Request,
     extract::Query,
     http::StatusCode,
@@ -12,6 +13,8 @@ use axum::{
     extract::Path,
     Router,
 };
+use tower_http::add_extension::AddExtensionLayer;
+use rusqlite::Connection;
 use sqlite_utilmod::sqlite_utilmod::update_person;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -23,8 +26,8 @@ use log::info;
 
 use dotenv::dotenv;
 use std::env;
-
-
+use std::sync::Arc;
+use tokio::sync::Mutex;
 // the input to our `ResponseDTO` handler
 #[derive(Debug, Serialize, Deserialize)]
 struct ResponseDTO {
@@ -98,6 +101,14 @@ fn token_is_valid(token: &str) -> bool {
     }
     true
 }
+use crate::sqlite_utilmod::sqlite_utilmod::open_my_db;
+use crate::sqlite_utilmod::sqlite_utilmod::select_all;
+use crate::sqlite_utilmod::sqlite_utilmod::select_one;
+use crate::sqlite_utilmod::sqlite_utilmod::PersonDTO;
+use crate::sqlite_utilmod::sqlite_utilmod::remove_person;
+use crate::sqlite_utilmod::sqlite_utilmod::insert_person;
+use crate::sqlite_utilmod::sqlite_utilmod::countperson;
+
 
 #[tokio::main]
 async fn main() {
@@ -105,6 +116,10 @@ async fn main() {
     env_logger::init();
 
     info!("🚀 Server starting...");
+
+    let connection = open_my_db().unwrap();
+    let db = Arc::new(Mutex::new(connection));
+
 
     let app_environment = env::var("APP_ENVIRONMENT").unwrap_or("development".to_string());
     let app_host = env::var("APP_HOST").unwrap_or("0.0.0.0".to_string());
@@ -124,6 +139,7 @@ async fn main() {
             info!("Running in development mode");
         }
     }
+   
     // initialize tracing
     //tracing_subscriber::fmt::init();
     // let routes = Router::new()
@@ -140,7 +156,7 @@ async fn main() {
         .route("/person/:id", put(updateperson_byid))
         .route("/person", post(create_person))
         .route("/person/:id", delete(removeperson_byid))
-
+        .layer(AddExtensionLayer::new(db))
         .fallback(any(route_not_found))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
@@ -165,16 +181,10 @@ async fn status() -> impl IntoResponse {
     (StatusCode::OK, Json(response))
 }
 
-use crate::sqlite_utilmod::sqlite_utilmod::open_my_db;
-use crate::sqlite_utilmod::sqlite_utilmod::select_all;
-use crate::sqlite_utilmod::sqlite_utilmod::select_one;
-use crate::sqlite_utilmod::sqlite_utilmod::PersonDTO;
-use crate::sqlite_utilmod::sqlite_utilmod::remove_person;
-use crate::sqlite_utilmod::sqlite_utilmod::insert_person;
-use crate::sqlite_utilmod::sqlite_utilmod::countperson;
 
-async fn queryperson(pagination: Query<Pagination>) -> impl IntoResponse{
-    let connection = open_my_db().unwrap();
+async fn queryperson(db: Extension<Arc<Mutex<Connection>>>, pagination: Query<Pagination>) -> impl IntoResponse{
+    //let connection = open_my_db().unwrap();
+    let connection = db.lock().await;
     let res = select_all(&connection, pagination.page_no as i32, pagination.page_size as i32);
     match res {
         Ok(res) => {
@@ -197,8 +207,8 @@ async fn queryperson(pagination: Query<Pagination>) -> impl IntoResponse{
     }
 }
 
-async fn removeperson_byid(Path(id): Path<i64>,) -> impl IntoResponse{
-    let connection = open_my_db().unwrap();
+async fn removeperson_byid(db: Extension<Arc<Mutex<Connection>>>, Path(id): Path<i64>,) -> impl IntoResponse{
+    let connection = db.lock().await;
     let res = remove_person(&connection, [id].to_vec());
     match res {
         Ok(res) => {
@@ -216,8 +226,8 @@ async fn removeperson_byid(Path(id): Path<i64>,) -> impl IntoResponse{
 }
 
 
-async fn getperson_byid(Path(id): Path<i64>,) -> impl IntoResponse{
-    let connection = open_my_db().unwrap();
+async fn getperson_byid(db: Extension<Arc<Mutex<Connection>>>, Path(id): Path<i64>,) -> impl IntoResponse{
+    let connection = db.lock().await;
     let res = select_one(&connection, id);
     match res {
         Ok(res) => {
@@ -233,8 +243,8 @@ async fn getperson_byid(Path(id): Path<i64>,) -> impl IntoResponse{
     }
 }
 
-async fn create_person(Json(payload): Json<PersonDTO>) -> impl IntoResponse{
-    let connection = open_my_db().unwrap();
+async fn create_person(db: Extension<Arc<Mutex<Connection>>>, Json(payload): Json<PersonDTO>) -> impl IntoResponse{
+    let connection = db.lock().await;
     let res = insert_person(&connection, &payload);
     match res {
         Ok(num) => {
@@ -250,9 +260,9 @@ async fn create_person(Json(payload): Json<PersonDTO>) -> impl IntoResponse{
 
 }
 
-async fn updateperson_byid(Path(id): Path<i64>,
+async fn updateperson_byid(db: Extension<Arc<Mutex<Connection>>>, Path(id): Path<i64>,
                             Json(payload): Json<PersonDTO>) -> impl IntoResponse{
-    let connection = open_my_db().unwrap();
+    let connection = db.lock().await;
     let res = update_person(&connection, id, &payload);
     match res {
         Ok(res) => {
