@@ -71,7 +71,7 @@ pub mod sqlite_utilmod {
 
     pub fn insert_person(con:&Connection,p:&PersonDTO) -> Result<usize,Error> {
         let mut id_generator_generator = SnowflakeIdGenerator::new(1, 1);
-        let id = id_generator_generator.real_time_generate();
+        let id = id_generator_generator.generate();
         return Ok(con.execute(
             "insert into person (department, name, salary, id) values (?1, ?2,?3, ?4)",
             params![p.department, p.name, p.salary, id]
